@@ -310,53 +310,153 @@ if 'target_models_lists' not in st.session_state:
     for target_config in configured_targets:
         st.session_state.target_models_lists[target_config["key"]] = []
 
-# --- UI Layout ---
+# --- Unified Model Fetching Section ---
+st.header("🔄 Refresh All Models")
+
+# Single button to fetch all models
+if st.button("🔄 Refresh Models from Source and All Targets", use_container_width=True, type="primary"):
+    if not all([source_endpoint, source_kv_url, source_secret_name]):
+        st.warning("Please ensure SOURCE_ENDPOINT, SOURCE_KV_URL, and SOURCE_SECRET_NAME are set in your .env file.")
+    elif not configured_targets:
+        st.warning("No target environments are properly configured. Please check your .env file.")
+    else:
+        # Calculate total operations for progress tracking
+        total_operations = 1 + len(configured_targets)  # 1 source + N targets
+        current_operation = 0
+        
+        with st.status(f"Fetching models from source and {len(configured_targets)} target environments...", expanded=True) as status:
+            try:
+                # --- Fetch Source Models ---
+                current_operation += 1
+                st.write(f"[{current_operation}/{total_operations}] 🎯 **Fetching source models...**")
+                
+                source_kv_client = get_secret_client(source_kv_url)
+                if source_kv_client:
+                    source_key = get_api_key_from_kv(source_kv_client, source_secret_name)
+                    
+                    if source_key:
+                        source_di_client = get_admin_client(source_endpoint, source_key)
+                        if source_di_client:
+                            if test_di_connection(source_di_client):
+                                try:
+                                    models = source_di_client.list_models()
+                                    custom_models = [m for m in models if hasattr(m, 'model_id') and not m.model_id.startswith('prebuilt-')]
+                                    st.session_state.models_list = custom_models
+                                    if st.session_state.models_list:
+                                        st.success(f"✅ Found {len(st.session_state.models_list)} custom models in source")
+                                        print(f"Source models fetched: {[m.model_id for m in st.session_state.models_list]}")
+                                    else:
+                                        st.info("No custom models found on the source resource.")
+                                except Exception as e:
+                                    st.error(f"An error occurred while fetching source models: {e}")
+                            else:
+                                st.error("Cannot proceed with source model listing due to connection issues.")
+                        else:
+                            st.error("Failed to create source DI client.")
+                    else:
+                        st.error("Failed to retrieve source API key.")
+                else:
+                    st.error("Failed to connect to source Key Vault.")
+                
+                # --- Fetch Target Models ---
+                for target_config in configured_targets:
+                    current_operation += 1
+                    st.write(f"[{current_operation}/{total_operations}] 🎯 **Fetching {target_config['name']} models...**")
+                    
+                    target_kv_client = get_secret_client(target_config['kv_url'])
+                    if target_kv_client:
+                        target_key = get_api_key_from_kv(target_kv_client, target_config['secret_name'])
+                        
+                        if target_key:
+                            target_di_client = get_admin_client(target_config['endpoint'], target_key)
+                            if target_di_client:
+                                if test_di_connection(target_di_client):
+                                    try:
+                                        models = target_di_client.list_models()
+                                        custom_models = [m for m in models if hasattr(m, 'model_id') and not m.model_id.startswith('prebuilt-')]
+                                        st.session_state.target_models_lists[target_config['key']] = custom_models
+                                        if custom_models:
+                                            st.success(f"✅ Found {len(custom_models)} custom models in {target_config['name']}")
+                                            print(f"{target_config['name']} models fetched: {[m.model_id for m in custom_models]}")
+                                        else:
+                                            st.info(f"No custom models found in {target_config['name']}.")
+                                    except Exception as e:
+                                        st.error(f"An error occurred while fetching {target_config['name']} models: {e}")
+                                else:
+                                    st.error(f"Cannot proceed with {target_config['name']} model listing due to connection issues.")
+                            else:
+                                st.error(f"Failed to create DI client for {target_config['name']}.")
+                        else:
+                            st.error(f"Failed to retrieve API key for {target_config['name']}.")
+                    else:
+                        st.error(f"Failed to connect to {target_config['name']} Key Vault.")
+                
+                st.write("🎉 **Model refresh completed!**")
+                
+            except Exception as e:
+                st.error(f"An unexpected error occurred during model refresh: {e}")
+                print(f"Unexpected error during model refresh: {e}")
+
+# --- Environment Details Section ---
+st.header("📊 Environment Details")
+
 col1, col2 = st.columns(2)
 
 # --- Source Column ---
 with col1:
-    st.header("Source Resource")
+    st.subheader("Source Resource")
     st.write(f"**Endpoint:** `{source_endpoint}`")
     st.write(f"**Key Vault:** `{source_kv_url}`")
-
-
-    if st.button("Get Models from Source", use_container_width=True):
+    
+    # Individual refresh button for source
+    if st.button("🔄 Refresh Source Models", key="refresh_source", use_container_width=True):
         if not all([source_endpoint, source_kv_url, source_secret_name]):
             st.warning("Please ensure SOURCE_ENDPOINT, SOURCE_KV_URL, and SOURCE_SECRET_NAME are set in your .env file.")
         else:
-            kv_client = get_secret_client(source_kv_url)
-            if kv_client:
-                with st.spinner("Fetching API key from Key Vault..."):
-                    source_key = get_api_key_from_kv(kv_client, source_secret_name)
-                
-                if source_key:
-                    di_client = get_admin_client(source_endpoint, source_key)
-                    if di_client:
-                        # Test the connection first
-                        if test_di_connection(di_client):
-                            with st.spinner("Fetching models..."):
-                                try:
-                                    models = di_client.list_models()
-                                    # Filter to only include custom models (exclude prebuilt models)
-                                    custom_models = [m for m in models if hasattr(m, 'model_id') and not m.model_id.startswith('prebuilt-')]
-                                    st.session_state.models_list = custom_models
-                                    if st.session_state.models_list:
-                                        st.success(f"✅ Found {len(st.session_state.models_list)} custom models")
-                                        print(f"Source models fetched: {[m.model_id for m in st.session_state.models_list]}")
-                                        # Show model details in an expandable section
-                                        with st.expander("📋 Custom Model Details"):
-                                            for model in st.session_state.models_list:
-                                                st.write(f"• **{model.model_id}** - Created: {model.created_date_time.strftime('%Y-%m-%d %H:%M') if hasattr(model, 'created_date_time') and model.created_date_time else 'Unknown'}")
-                                    else:
-                                        st.info("No custom models found on the source resource.")
-                                except Exception as e:
-                                    st.error(f"An error occurred while fetching models: {e}")
+            with st.spinner("Fetching source models..."):
+                try:
+                    source_kv_client = get_secret_client(source_kv_url)
+                    if source_kv_client:
+                        source_key = get_api_key_from_kv(source_kv_client, source_secret_name)
+                        
+                        if source_key:
+                            source_di_client = get_admin_client(source_endpoint, source_key)
+                            if source_di_client:
+                                if test_di_connection(source_di_client):
+                                    try:
+                                        models = source_di_client.list_models()
+                                        custom_models = [m for m in models if hasattr(m, 'model_id') and not m.model_id.startswith('prebuilt-')]
+                                        st.session_state.models_list = custom_models
+                                        if st.session_state.models_list:
+                                            st.success(f"✅ Found {len(st.session_state.models_list)} custom models in source")
+                                            print(f"Source models fetched: {[m.model_id for m in st.session_state.models_list]}")
+                                        else:
+                                            st.info("No custom models found on the source resource.")
+                                    except Exception as e:
+                                        st.error(f"An error occurred while fetching source models: {e}")
+                                else:
+                                    st.error("Cannot proceed with source model listing due to connection issues.")
+                            else:
+                                st.error("Failed to create source DI client.")
                         else:
-                            st.error("Cannot proceed with model listing due to connection issues.")
+                            st.error("Failed to retrieve source API key.")
+                    else:
+                        st.error("Failed to connect to source Key Vault.")
+                except Exception as e:
+                    st.error(f"An unexpected error occurred: {e}")
+    
+    # Show source model count and details
+    if st.session_state.models_list:
+        st.metric("Custom Models", len(st.session_state.models_list))
+        with st.expander("📋 Source Model Details"):
+            for model in st.session_state.models_list:
+                st.write(f"• **{model.model_id}** - Created: {model.created_date_time.strftime('%Y-%m-%d %H:%M') if hasattr(model, 'created_date_time') and model.created_date_time else 'Unknown'}")
+    else:
+        st.info("No models loaded. Use the refresh button above.")
 
 # --- Target Environments Section ---
 with col2:
-    st.header("Target Environments")
+    st.subheader("Target Environments")
     
     if not configured_targets:
         st.warning("No target environments configured. Please check your .env file.")
@@ -370,60 +470,72 @@ with col2:
                 st.write(f"**Endpoint:** `{target_config['endpoint']}`")
                 st.write(f"**Key Vault:** `{target_config['kv_url']}`")
                 
-                # Button to check target models
-                if st.button(f"Check {target_config['name']} Models", key=f"check_{target_config['key']}", use_container_width=True):
-                    kv_client = get_secret_client(target_config['kv_url'])
-                    if kv_client:
-                        with st.spinner("Fetching API key from Key Vault..."):
-                            target_key = get_api_key_from_kv(kv_client, target_config['secret_name'])
-                        
-                        if target_key:
-                            di_client = get_admin_client(target_config['endpoint'], target_key)
-                            if di_client:
-                                # Test the connection first
-                                if test_di_connection(di_client):
-                                    with st.spinner(f"Fetching {target_config['name']} models..."):
-                                        try:
-                                            models = di_client.list_models()
-                                            # Filter to only include custom models (exclude prebuilt models)
-                                            custom_models = [m for m in models if hasattr(m, 'model_id') and not m.model_id.startswith('prebuilt-')]
-                                            st.session_state.target_models_lists[target_config['key']] = custom_models
-                                            if custom_models:
-                                                st.success(f"✅ Found {len(custom_models)} custom models in {target_config['name']}")
-                                                print(f"{target_config['name']} models fetched: {[m.model_id for m in custom_models]}")
-                                                # Show model details in an expandable section
-                                                with st.expander(f"📋 {target_config['name']} Custom Model Details"):
-                                                    for model in custom_models:
-                                                        st.write(f"• **{model.model_id}** - Created: {model.created_date_time.strftime('%Y-%m-%d %H:%M') if hasattr(model, 'created_date_time') and model.created_date_time else 'Unknown'}")
-                                            else:
-                                                st.info(f"No custom models found on {target_config['name']}.")
-                                        except Exception as e:
-                                            st.error(f"An error occurred while fetching {target_config['name']} models: {e}")
+                # Individual refresh button for this target
+                if st.button(f"🔄 Refresh {target_config['name']} Models", key=f"refresh_{target_config['key']}", use_container_width=True):
+                    with st.spinner(f"Fetching {target_config['name']} models..."):
+                        try:
+                            target_kv_client = get_secret_client(target_config['kv_url'])
+                            if target_kv_client:
+                                target_key = get_api_key_from_kv(target_kv_client, target_config['secret_name'])
+                                
+                                if target_key:
+                                    target_di_client = get_admin_client(target_config['endpoint'], target_key)
+                                    if target_di_client:
+                                        if test_di_connection(target_di_client):
+                                            try:
+                                                models = target_di_client.list_models()
+                                                custom_models = [m for m in models if hasattr(m, 'model_id') and not m.model_id.startswith('prebuilt-')]
+                                                st.session_state.target_models_lists[target_config['key']] = custom_models
+                                                if custom_models:
+                                                    st.success(f"✅ Found {len(custom_models)} custom models in {target_config['name']}")
+                                                    print(f"{target_config['name']} models fetched: {[m.model_id for m in custom_models]}")
+                                                else:
+                                                    st.info(f"No custom models found in {target_config['name']}.")
+                                            except Exception as e:
+                                                st.error(f"An error occurred while fetching {target_config['name']} models: {e}")
+                                        else:
+                                            st.error(f"Cannot proceed with {target_config['name']} model listing due to connection issues.")
+                                    else:
+                                        st.error(f"Failed to create DI client for {target_config['name']}.")
                                 else:
-                                    st.error(f"Cannot proceed with model listing due to connection issues with {target_config['name']}.")
-    
-    st.markdown("---")
+                                    st.error(f"Failed to retrieve API key for {target_config['name']}.")
+                            else:
+                                st.error(f"Failed to connect to {target_config['name']} Key Vault.")
+                        except Exception as e:
+                            st.error(f"An unexpected error occurred: {e}")
+                
+                # Show target model count and details
+                target_key = target_config['key']
+                if target_key in st.session_state.target_models_lists and st.session_state.target_models_lists[target_key]:
+                    models = st.session_state.target_models_lists[target_key]
+                    st.metric("Custom Models", len(models))
+                    with st.expander(f"📋 {target_config['name']} Model Details"):
+                        for model in models:
+                            st.write(f"• **{model.model_id}** - Created: {model.created_date_time.strftime('%Y-%m-%d %H:%M') if hasattr(model, 'created_date_time') and model.created_date_time else 'Unknown'}")
+                else:
+                    st.info("No models loaded. Use the refresh button above.")
+
+st.markdown("---")
 
 # --- Model Selection and Copy Section ---
 st.header("🔄 Model Copy Operations")
 
 if not st.session_state.models_list:
-    st.info("Fetch models from a source resource to see copy options.")
+    st.info("Use the 'Refresh Models from Source and All Targets' button above or individual refresh buttons in each environment section to load models.")
 elif not configured_targets:
     st.warning("No target environments configured. Please check your .env file.")
 else:
-    # Get all target model IDs to filter out existing models
-    all_target_model_ids = set()
+    # Get target model IDs for each target environment
+    target_model_ids_by_target = {}
     for target_key in st.session_state.target_models_lists:
         target_models = st.session_state.target_models_lists[target_key]
-        all_target_model_ids.update(model.model_id for model in target_models)
+        target_model_ids_by_target[target_key] = set(model.model_id for model in target_models)
     
-    # Filter available models (models that don't exist in any target)
-    available_models = [model for model in st.session_state.models_list if model.model_id not in all_target_model_ids]
+    # Show all models (we'll indicate which ones exist in targets)
+    available_models = st.session_state.models_list
     
     if not available_models:
-        st.warning("All source models already exist in at least one target environment.")
-        st.info("Use the 'Check Target Models' buttons to refresh target model lists.")
+        st.info("No models found in source.")
     else:
         # Sort models by creation date (newest first)
         sorted_models = sorted(
@@ -441,18 +553,78 @@ else:
         table_data = []
         model_id_to_model = {}
         
+        # Create column configuration for data editor
+        column_config = {
+            "Select": st.column_config.CheckboxColumn(
+                "Select",
+                help="Check to select models for copying",
+                default=False,
+            ),
+            "Model ID": st.column_config.TextColumn(
+                "Model ID",
+                help="Source model identifier",
+                disabled=True,
+            ),
+            "Created Date": st.column_config.TextColumn(
+                "Created Date",
+                help="When the model was created",
+                disabled=True,
+            ),
+            "Target ID": st.column_config.TextColumn(
+                "Target ID",
+                help="Target model identifier (will be updated based on suffix)",
+                disabled=True,
+            ),
+        }
+        
+        # Add status columns for each configured target
+        disabled_columns = ["Model ID", "Created Date", "Target ID"]
+        for target_config in configured_targets:
+            target_key = target_config["key"]
+            column_name = f"{target_config['name']} Status"
+            column_config[column_name] = st.column_config.TextColumn(
+                column_name,
+                help=f"Model existence status in {target_config['name']}",
+                disabled=True,
+            )
+            disabled_columns.append(column_name)
+        
         for model in sorted_models:
             created_date = model.created_date_time.strftime('%Y-%m-%d %H:%M') if hasattr(model, 'created_date_time') and model.created_date_time else 'Unknown'
-            table_data.append({
+            
+            # Create base row data
+            row_data = {
                 'Select': False,
                 'Model ID': model.model_id,
                 'Created Date': created_date,
                 'Target ID': model.model_id  # Default to same name as source
-            })
+            }
+            
+            # Add status for each target environment
+            for target_config in configured_targets:
+                target_key = target_config["key"]
+                column_name = f"{target_config['name']} Status"
+                
+                # Check if model exists in this target
+                if target_key in target_model_ids_by_target and model.model_id in target_model_ids_by_target[target_key]:
+                    row_data[column_name] = "✅ Exists"
+                elif target_key in st.session_state.target_models_lists:
+                    # Target models have been fetched and model doesn't exist
+                    row_data[column_name] = "❌ Not Found"
+                else:
+                    # Target models haven't been fetched yet
+                    row_data[column_name] = "❓ Unknown"
+            
+            table_data.append(row_data)
             model_id_to_model[model.model_id] = model
         
         # Display table with selection
         st.write(f"**{len(available_models)} Models Available for Copying (sorted by creation date):**")
+        
+        # Add legend for status symbols
+        if configured_targets:
+            st.caption("**Status Legend:** ✅ Model exists in target | ❌ Model not found in target | ❓ Target not checked yet")
+            st.info("💡 **Tip:** Use the 'Refresh Models from Source and All Targets' button above to update all environments at once, or use individual refresh buttons in each environment section for selective updates.")
         
         # Create DataFrame for better display
         df = pd.DataFrame(table_data)
@@ -460,29 +632,8 @@ else:
         # Use data_editor for interactive selection
         edited_df = st.data_editor(
             df,
-            column_config={
-                "Select": st.column_config.CheckboxColumn(
-                    "Select",
-                    help="Check to select models for copying",
-                    default=False,
-                ),
-                "Model ID": st.column_config.TextColumn(
-                    "Model ID",
-                    help="Source model identifier",
-                    disabled=True,
-                ),
-                "Created Date": st.column_config.TextColumn(
-                    "Created Date",
-                    help="When the model was created",
-                    disabled=True,
-                ),
-                "Target ID": st.column_config.TextColumn(
-                    "Target ID",
-                    help="Target model identifier (will be updated based on suffix)",
-                    disabled=True,
-                ),
-            },
-            disabled=["Model ID", "Created Date", "Target ID"],
+            column_config=column_config,
+            disabled=disabled_columns,
             hide_index=True,
             use_container_width=True,
             height=min(400, len(table_data) * 35 + 70)  # Dynamic height based on row count
@@ -518,12 +669,31 @@ else:
                 created_date = model.created_date_time.strftime('%Y-%m-%d %H:%M') if hasattr(model, 'created_date_time') and model.created_date_time else 'Unknown'
                 # Check if this model was previously selected
                 was_selected = model.model_id in selected_model_ids
-                updated_table_data.append({
+                
+                # Create base row data with updated target ID
+                row_data = {
                     'Select': was_selected,
                     'Model ID': model.model_id,
                     'Created Date': created_date,
                     'Target ID': f"{model.model_id}{copy_suffix}"
-                })
+                }
+                
+                # Add status for each target environment
+                for target_config in configured_targets:
+                    target_key = target_config["key"]
+                    column_name = f"{target_config['name']} Status"
+                    
+                    # Check if model exists in this target
+                    if target_key in target_model_ids_by_target and model.model_id in target_model_ids_by_target[target_key]:
+                        row_data[column_name] = "✅ Exists"
+                    elif target_key in st.session_state.target_models_lists:
+                        # Target models have been fetched and model doesn't exist
+                        row_data[column_name] = "❌ Not Found"
+                    else:
+                        # Target models haven't been fetched yet
+                        row_data[column_name] = "❓ Unknown"
+                
+                updated_table_data.append(row_data)
             
             # Update the DataFrame and display updated table
             st.write("**Updated table with custom suffix:**")
@@ -532,29 +702,8 @@ else:
             # Use data_editor for interactive selection with updated data
             edited_df = st.data_editor(
                 updated_df,
-                column_config={
-                    "Select": st.column_config.CheckboxColumn(
-                        "Select",
-                        help="Check to select models for copying",
-                        default=False,
-                    ),
-                    "Model ID": st.column_config.TextColumn(
-                        "Model ID",
-                        help="Source model identifier",
-                        disabled=True,
-                    ),
-                    "Created Date": st.column_config.TextColumn(
-                        "Created Date",
-                        help="When the model was created",
-                        disabled=True,
-                    ),
-                    "Target ID": st.column_config.TextColumn(
-                        "Target ID",
-                        help="Target model identifier with custom suffix",
-                        disabled=True,
-                    ),
-                },
-                disabled=["Model ID", "Created Date", "Target ID"],
+                column_config=column_config,
+                disabled=disabled_columns,
                 hide_index=True,
                 use_container_width=True,
                 height=min(400, len(updated_table_data) * 35 + 70),
@@ -578,6 +727,16 @@ else:
                         created_date = model.created_date_time.strftime('%Y-%m-%d %H:%M') if hasattr(model, 'created_date_time') and model.created_date_time else 'Unknown'
                         target_name = f"{model_id}{copy_suffix}" if copy_suffix else model_id
                         st.write(f"• **{model_id}** (Created: {created_date}) → `{target_name}`")
+                        
+                        # Show status for selected targets
+                        for target in selected_targets:
+                            target_key = target["key"]
+                            if target_key in target_model_ids_by_target and model_id in target_model_ids_by_target[target_key]:
+                                st.warning(f"  ⚠️ Model already exists in {target['name']}")
+                            elif target_key in st.session_state.target_models_lists:
+                                st.success(f"  ✅ Ready to copy to {target['name']}")
+                            else:
+                                st.info(f"  ❓ {target['name']} models not checked yet")
                     
                     st.write("**Will be copied to:**")
                     for target in selected_targets:
