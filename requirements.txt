@@ -3,3 +3,4 @@ azure-ai-documentintelligence
 azure-identity
 azure-keyvault-secrets
 python-dotenv
+requests
