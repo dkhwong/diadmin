@@ -106,12 +106,29 @@ def get_admin_client(endpoint, key):
         st.error(f"❌ Failed to create DI client for endpoint {endpoint}: {e}")
         return None
 
-def authorize_copy_model(target_endpoint, target_key, model_id, description=""):
+def authorize_copy_model(target_endpoint, target_key, model_id, description="", api_version="2023-07-31"):
     """
     Authorize a model copy operation on the target endpoint.
     Returns the copy authorization object needed for the copy operation.
+    
+    Args:
+        target_endpoint: The target Document Intelligence endpoint URL
+        target_key: The API key for the target endpoint
+        model_id: The model ID to authorize for copying
+        description: Optional description for the copied model
+        api_version: API version to use. Models built with apiVersion 2024-11-30 or later
+                     should use "2024-11-30" which uses the documentintelligence path.
+                     Older models use "2023-07-31" with the formrecognizer path.
     """
-    url = f"{target_endpoint}/formrecognizer/documentModels:authorizeCopy?api-version=2023-07-31"
+    # Use the appropriate path based on API version
+    # API version 2024-11-30+ uses documentintelligence/documentModels
+    # Older API versions use formrecognizer/documentModels
+    if api_version >= "2024-11-30":
+        path_prefix = "documentintelligence"
+    else:
+        path_prefix = "formrecognizer"
+    
+    url = f"{target_endpoint}/{path_prefix}/documentModels:authorizeCopy?api-version={api_version}"
     headers = {
         "Ocp-Apim-Subscription-Key": target_key,
         "Content-Type": "application/json"
@@ -142,12 +159,29 @@ def authorize_copy_model(target_endpoint, target_key, model_id, description=""):
                 return {"error": f"HTTP {e.response.status_code}: {str(e)}"}
         return {"error": str(e)}
 
-def copy_model_to_target(source_endpoint, source_key, source_model_id, copy_authorization):
+def copy_model_to_target(source_endpoint, source_key, source_model_id, copy_authorization, api_version="2023-07-31"):
     """
     Initiate the copy operation from the source endpoint using the copy authorization.
     Returns the operation location for status tracking.
+    
+    Args:
+        source_endpoint: The source Document Intelligence endpoint URL
+        source_key: The API key for the source endpoint
+        source_model_id: The model ID to copy from the source
+        copy_authorization: The copy authorization object from authorize_copy_model
+        api_version: API version to use. Models built with apiVersion 2024-11-30 or later
+                     should use "2024-11-30" which uses the documentintelligence path.
+                     Older models use "2023-07-31" with the formrecognizer path.
     """
-    url = f"{source_endpoint}/formrecognizer/documentModels/{source_model_id}:copyTo?api-version=2023-07-31"
+    # Use the appropriate path based on API version
+    # API version 2024-11-30+ uses documentintelligence/documentModels
+    # Older API versions use formrecognizer/documentModels
+    if api_version >= "2024-11-30":
+        path_prefix = "documentintelligence"
+    else:
+        path_prefix = "formrecognizer"
+    
+    url = f"{source_endpoint}/{path_prefix}/documentModels/{source_model_id}:copyTo?api-version={api_version}"
     headers = {
         "Ocp-Apim-Subscription-Key": source_key,
         "Content-Type": "application/json"
@@ -643,14 +677,23 @@ else:
         selected_model_ids = [row['Model ID'] for _, row in edited_df.iterrows() if row['Select']]
         
         # Copy configuration section
-        col_suffix, col_targets = st.columns([1, 2])
+        col_suffix, col_api, col_targets = st.columns([1, 1, 2])
         
         with col_suffix:
             # Copy suffix input
             copy_suffix = st.text_input(
-                "Suffix for copied models", 
+                "Suffix for copied models",
                 value="",
                 help="Optional suffix to append to each model ID in the target resource. Leave empty to use the same name as source."
+            )
+        
+        with col_api:
+            # API version selection
+            api_version = st.selectbox(
+                "API Version",
+                options=["2023-07-31", "2024-11-30"],
+                index=0,
+                help="Select the API version for copy operations. Use '2024-11-30' for models built with apiVersion 2024-11-30 or later (uses documentintelligence path). Use '2023-07-31' for older models (uses formrecognizer path)."
             )
         
         with col_targets:
@@ -813,19 +856,19 @@ else:
                                         
                                         # Step 1: Authorize copy on target
                                         st.write(f"  🔑 Authorizing copy...")
-                                        copy_auth = authorize_copy_model(target_config['endpoint'], target_key, new_model_id, f"Copied from {source_endpoint} {model_id}")
+                                        copy_auth = authorize_copy_model(target_config['endpoint'], target_key, new_model_id, f"Copied from {source_endpoint} {model_id}", api_version)
                                         
                                         if "error" in copy_auth:
                                             st.error(f"  ❌ Authorization failed: {copy_auth['error']}")
                                             all_results[target_config['name']]['failed'].append({
-                                                "model_id": model_id, 
+                                                "model_id": model_id,
                                                 "error": f"Authorization failed: {copy_auth['error']}"
                                             })
                                             continue
                                         
                                         # Step 2: Initiate copy from source
                                         st.write(f"  📋 Initiating copy...")
-                                        copy_result = copy_model_to_target(source_endpoint, source_key, model_id, copy_auth)
+                                        copy_result = copy_model_to_target(source_endpoint, source_key, model_id, copy_auth, api_version)
                                         
                                         if "error" in copy_result:
                                             st.error(f"  ❌ Copy initiation failed: {copy_result['error']}")
